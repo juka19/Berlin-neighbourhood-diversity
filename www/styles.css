@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300&family=Quicksand:wght@300&display=swap');
+
+body{ /* Normal  */
+  font-size: 14px;
+  font-family: Comfortaa;
+  font-family: 'Light', sans-serif;
+  font-weight:300;
+  color:white;
+}
+
+/* Header */
+h1,h2,h3,h4,5,h6{
+  font-size: 24pt;
+  color:white;
+}
+
+
+.nav-tabs-custom .nav-tabs li.active a {
+  color: white;
+  font-family: Comfortaa;
+}
+
+.nav-tabs-custom .nav-tabs li:not(.active) a {
+  color: white;
+  font-family:Comfortaa;
+}
+
+.navbar {
+  background:#090909;
+  background-color:#090909;
+  border-color:#090909;
+  color:white;
+  font-family: Comfortaa;
+}
+
+.navbar-brand {
+color:white!important;
+}
+
+.value-box .body {
+color:white
+}
+
+
+.control-label {
+  color:white;
+  font-family: Comfortaa;
+}
+
+.sidebar.section.sidebar {
+  font-family: Comfortaa;
+  color: #D3D3D3;
+  font-size: 8;
+  text-align: justify;
+}
+
+.js-irs-0 .irs-bar {
+border-top-color: #FDE725FF;
+border-bottom-color: #FDE725FF;
+} 
+
+.js-irs-0 .irs-bar-edge {
+border-color: #FDE725FF;
+}
+
+.js-irs-0 .irs-single, .js-irs-0, .irs-bar-edge, .js-irs-0, .irs-bar {
+background: #FDE725FF;
+}
+
+a:link {
+  color: gray;
+}

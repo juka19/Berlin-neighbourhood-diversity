@@ -1,0 +1,350 @@
+---
+title: "Berlin's Neighbourhood Diversity"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    social: menu
+    vertical_layout: fill
+    theme: 
+      base_font:
+        google: Comfortaa
+      version: 3
+      bootswatch: slate
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(plotly)
+library(leaflet)
+library(tidyverse)
+library(sf)
+library(highcharter)
+library(echarts4r)
+library(viridis)
+library(rgeos)
+# Install thematic and un-comment for themed static plots (i.e., ggplot2)
+# thematic::thematic_rmd()
+
+
+cols <- c('HK_Polen', 'HK_EheJug', 
+          'HK_EheSU', 'HK_Turk', 
+          'HK_Arab', 'HK_Sonst', 
+          'HK_NZOrd', 'HK_EU15',
+          'HK_EU28', 'no_mh')
+
+data <- readRDS('./data/final_data.RDS')
+
+data$lon <- st_coordinates(st_centroid(data$geometry))[, 1]
+data$lat <- st_coordinates(st_centroid(data$geometry))[, 2]
+
+
+data2 <- reactive({data})
+
+a <- bslib::font_link(
+  "Roboto robertson",
+  href = "https://fonts.googleapis.com/css2?family=Quicksand:wght@300&display=swap"
+)
+
+```
+
+
+Sidebar {.sidebar}
+-------------------------------------------------------------------
+
+```{r}
+sliderInput('span', label = 'Span Parameter', min = 0.1, max = 0.9, value = 0.3, 
+            step = 0.1)
+```
+
+Click and drag on the scatterplot to highlight the corresponding neighbourhoods on the map below, and click on a neighbourhood on the map to generate a chart of migration history counts & shares. The yellow line on the scatterplot represents a locally-weighted estimate of how diversity varies in Berlin by distance from the urban cores.
+
+The dashboard is an adaption of [Kyle Walker's work](https://walkerke.shinyapps.io/neighborhood_diversity/).
+</br>
+</br>
+<div style="text-align: left"> Data sources:
+[Einwohnerregisterstatistik, Amt für Statistik Berlin-Brandenburg](https://daten.berlin.de/datensaetze/einwohnerinnen-und-einwohner-mit-migrationshintergrund-berlin-lor-planungsr%C3%A4umen-nach-8), [Senatesverwaltung für Stadtentwicklung und Wohnen, Stadtentwicklungsplan Zentren 2030](https://www.stadtentwicklung.berlin.de/planen/stadtentwicklungsplanung/download/zentren/StEP_Zentren_2030.pdf)
+</div>
+
+
+Row
+-----------------------------------------------------------------------
+
+### Diversity gradient
+
+```{r}
+output$scatter <- renderPlotly({
+  m <- data2() %>% 
+    mutate(text = glue::glue(
+      "<b>{PLANUNGSRA}</b><br>Distance: {round(dist, 1)}m <br>Entropy: {round(diversity, 2)}"
+    ))
+  
+  p1a <- ggplot(m) + 
+    geom_point(alpha = 0.4, aes(dist, diversity, 
+                                key = RAUMID, text = text), color = 'gray') + 
+    theme_minimal(base_size = 14) + 
+    stat_smooth(aes(dist, diversity), color = '#FDE725FF', method = 'loess',
+                span = input$span, se = FALSE) + 
+    labs(x = "", y = "") 
+  
+  g <- ggplotly(p1a, source = 'source', tooltip = "text") %>% 
+    layout(dragmode = 'lasso', 
+           yaxis = list(title = 'Diversity score', 
+                        font = list(size = 5)), 
+           xaxis = list(title = 'Distance from nearest urban center (m)',
+                        font = list(size = 5)),
+           margin = list (l = 90, b = 70),
+           font = list(family = "Comfortaa", color = 'white', size = 12),
+           plot_bgcolor = '#090909',
+           paper_bgcolor = '#090909',
+           fig_bgcolor = '#090909',
+           hoverlabel = list(font = list(family = 'Comfortaa', 
+                                         color = '#FDE725FF'),
+                             bgcolor = '#363B40',
+                             bordercolor = '#363B40')) %>% 
+    event_register("plotly_selecting")
+  
+})
+
+plotlyOutput('scatter', width = "80%")
+```
+
+
+Row
+---------------------------------------------------------------------------
+
+### Map of diversity scores
+
+```{r}
+output$map <- renderLeaflet({
+  m <- data2() 
+  
+  pal <- colorNumeric(viridis_pal(option = 'A')(2), NULL)
+  
+  
+  map <- leaflet(m) %>% 
+    addProviderTiles('CartoDB.DarkMatter') %>% 
+    clearShapes() %>% 
+    addPolygons(stroke = FALSE, smoothFactor = 0,
+                fillColor = ~pal(diversity), fillOpacity = 0.7,
+                layerId = ~RAUMID,
+                label = ~PLANUNGSRA,
+                weight = .1,
+                labelOptions = labelOptions(
+                          style = list(
+                            'color' = '#FDE725FF',
+                            'font-family' = 'Comfortaa',
+                            'font-weight' = 'bold',
+                            'background-color' = '#363B40',
+                            'background-opacity' = '0.1',
+                            'border-color' = 'rgba(0,0,0,0)',
+                            'box-shadow' = 'rgba(0,0,0,0)'
+                          ), textsize = "11px"
+                        )) %>% 
+    addLegend(position = 'bottomright', pal = pal,
+              values = m$diversity, title = "Score",
+              opacity = 0.2
+              )
+  
+  map
+})
+
+click_lor <- eventReactive(input$map_shape_click, {
+  
+  x <- input$map_shape_click
+  
+  y <- x$id
+  
+  return(y)
+  
+})
+
+
+lor_ids <- reactive({
+  eventdata <- event_data("plotly_selected", source = "source")
+  if (is.null(eventdata)){
+    
+    return(NULL)
+    
+  } else {
+    
+    lors <- eventdata$key
+    
+    return(lors)
+  }
+  
+})
+
+observe({
+  
+  req(lor_ids())
+  
+  proxy <- leafletProxy('map')
+  
+  sub <- filter(data, RAUMID %in% lor_ids())
+  
+  box <- st_bbox(sub) %>% as.vector()
+  
+  
+  proxy %>% 
+    clearGroup(group = 'sub') %>% 
+    addPolygons(data = sub, fill = FALSE, color = '#FDE725FF',
+                opacity = 1, group = 'sub', weight = 1.5) %>% 
+    fitBounds(lng1 = box[1],
+              lat1 = box[2],
+              lng2 = box[3],
+              lat2 = box[4])
+})
+
+
+observeEvent(click_lor(), {
+  
+  map <- leafletProxy('map') %>% 
+    removeShape('hlor') %>% 
+    addPolygons(data = filter(data2(), RAUMID == click_lor()), fill = FALSE,
+                              color = '#440154FF', opacity = 1, layerId = 'hlor',
+                              weight = 1.6)
+})
+
+
+lor_data <- reactive({
+  return(filter(data2(), RAUMID == click_lor()))
+})
+
+leafletOutput('map')
+
+```
+
+
+### Breakdown of migration history diversity of selected neighbourhood
+
+```{r}
+output$miplot2 <- renderEcharts4r({
+  
+   td <- lor_data() %>% 
+     pivot_longer(
+       cols = cols, 
+       names_to = 'demography', 
+       values_to = 'pop') %>% 
+     mutate(demography = fct_recode(demography, 
+                                    'EU15' = 'HK_EU15', 
+                                    'EU28' = 'HK_EU28',
+                                    'Poland' = 'HK_Polen',
+                                    'Frm. Yugoslavia' = 'HK_EheJug',
+                                    'Frm. Soviet Union' = 'HK_EheSU',
+                                    'Turkey' = 'HK_Turk',
+                                    'Arab' = 'HK_Arab', 
+                                    'Other' = 'HK_Sonst',
+                                    'Not assignable' = 'HK_NZOrd',
+                                    'No migration history' = 'no_mh'))
+   
+   plraum <- lor_data() %>% pull(PLANUNGSRA)
+   bz <- lor_data() %>% pull(BEZIRKSNAM)
+   
+   e_common(font_family = "Comfortaa", theme = 'dark-bold')
+   
+   td %>% 
+     e_charts(demography) %>% 
+     e_pie(pop, radius = c("50%", "70%"), 
+           color = viridis(10)) %>% 
+     e_legend(show = FALSE) %>% 
+     e_tooltip(
+       formatter = htmlwidgets::JS(
+         "function(params) {
+         return('<strong>' + params.name + 
+         '</strong><br />Total: ' + params.value + 
+         '<br />Percent: ' + params.percent) + '%'
+         }"
+       ),
+       backgroundColor = "#363B40",
+       textStyle = list(color = '#FDE725FF'),
+       borderColor = "#363B40"
+     ) %>% 
+     e_title(paste0(plraum, ', ', bz),
+             textStyle = list(fontWeight = 'normal')) %>% 
+     e_color(background = '#090909')
+   
+     
+})
+
+echarts4rOutput('miplot2')
+```
+
+
+<style>
+
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300&family=Quicksand:wght@300&display=swap');
+
+body{ /* Normal  */
+  font-size: 14px;
+  font-family: Comfortaa;
+  font-family: 'Light', sans-serif;
+  font-weight:300;
+  color:white;
+}
+
+/* Header */
+h1,h2,h3,h4,5,h6{
+  font-size: 24pt;
+  color:white;
+}
+
+
+.nav-tabs-custom .nav-tabs li.active a {
+  color: white;
+  font-family: Comfortaa;
+}
+
+.nav-tabs-custom .nav-tabs li:not(.active) a {
+  color: white;
+  font-family:Comfortaa;
+}
+
+.navbar {
+  background:#090909;
+  background-color:#090909;
+  border-color:#090909;
+  color:white;
+  font-family: Comfortaa;
+}
+
+.navbar-brand {
+color:white!important;
+}
+
+.value-box .body {
+color:white
+}
+
+
+.control-label {
+  color:white;
+  font-family: Comfortaa;
+}
+
+.sidebar.section.sidebar {
+  font-family: Comfortaa;
+  color: #D3D3D3;
+  font-size: 8;
+  text-align: justify;
+}
+
+.js-irs-0 .irs-bar {
+border-top-color: #FDE725FF;
+border-bottom-color: #FDE725FF;
+} 
+
+.js-irs-0 .irs-bar-edge {
+border-color: #FDE725FF;
+}
+
+.js-irs-0 .irs-single, .js-irs-0 .irs-bar-edge, .js-irs-0 .irs-bar {
+background: #FDE725FF;
+}
+
+a:link {
+  color: gray;
+}
+
+</style>
